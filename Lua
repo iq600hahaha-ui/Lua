@@ -1,0 +1,221 @@
+-- โหลด Rayfield Library
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- สร้าง Window หลัก (ภาษาไทย / ไม่มี Key)
+local Window = Rayfield:CreateWindow({
+    Name = "MM2 Ultimate Script | ภาษาไทย",
+    LoadingTitle = "กำลังโหลดระบบ MM2...",
+    LoadingSubtitle = "by Assistant",
+    ConfigurationSaving = {
+        Enabled = false,
+    },
+    KeySystem = false
+})
+
+-- บริการพื้นฐานของ Roblox
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- 1. ระบบ ESP (แสดงตำแหน่งตามสีบทบาท)
+-- ==========================================
+local ESPTab = Window:CreateTab("มองทะลุ (ESP)", 4483362458)
+
+local espEnabled = false
+local espHighlights = {}
+
+local function getRoleColor(player)
+    if not player.Character then return Color3.fromRGB(0, 255, 0) end
+    
+    -- เช็กจากไอเทมในตัวหรือมีด/ปืนที่ถืออยู่
+    local backpack = player:FindFirstChild("Backpack")
+    local character = player.Character
+    
+    local hasKnife = (backpack and backpack:FindFirstChild("Knife")) or (character and character:FindFirstChild("Knife"))
+    local hasGun = (backpack and backpack:FindFirstChild("Gun")) or (character and character:FindFirstChild("Gun"))
+    
+    if hasKnife then
+        return Color3.fromRGB(255, 0, 0) -- 🔴 ฆาตกร (สีแดง)
+    elseif hasGun then
+        return Color3.fromRGB(0, 150, 255) -- 🔵 นายอำเภอ (สีฟ้า)
+    else
+        return Color3.fromRGB(0, 255, 0) -- 🟢 คนธรรมดา (สีเขียว)
+    end
+end
+
+local function updateESP()
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local char = player.Character
+            local color = getRoleColor(player)
+            
+            if not espHighlights[player] or not espHighlights[player].Parent then
+                local highlight = Instance.new("Highlight")
+                highlight.Name = "MM2_ESP"
+                highlight.Adornee = char
+                highlight.FillTransparency = 0.5
+                highlight.OutlineTransparency = 0
+                highlight.Parent = char
+                espHighlights[player] = highlight
+            end
+            
+            if espHighlights[player] then
+                espHighlights[player].FillColor = color
+                espHighlights[player].OutlineColor = color
+                espHighlights[player].Enabled = espEnabled
+            end
+        else
+            if espHighlights[player] then
+                espHighlights[player]:Destroy()
+                espHighlights[player] = nil
+            end
+        end
+    end
+end
+
+ESPTab:CreateToggle({
+    Name = "เปิดใช้งาน ESP (แยกสีบทบาท)",
+    CurrentValue = false,
+    Flag = "ESPToggle",
+    Callback = function(Value)
+        espEnabled = Value
+        if not espEnabled then
+            for player, highlight in pairs(espHighlights) do
+                if highlight then highlight:Destroy() end
+            end
+            espHighlights = {}
+        end
+    end,
+})
+
+-- ลูปอัปเดต ESP ตลอดเวลา
+RunService.RenderStepped:Connect(function()
+    if espEnabled then
+        updateESP()
+    end
+end)
+
+-- ==========================================
+-- 2. ระบบเก็บเหรียญอัตโนมัติ (Auto Farm)
+-- ==========================================
+local FarmTab = Window:CreateTab("ฟาร์มเหรียญ", 4483362458)
+local autoCoinEnabled = false
+
+FarmTab:CreateToggle({
+    Name = "เก็บเหรียญอัตโนมัติ (Auto Collect Coins)",
+    CurrentValue = false,
+    Flag = "AutoCoinToggle",
+    Callback = function(Value)
+        autoCoinEnabled = Value
+        if autoCoinEnabled then
+            task.spawn(function()
+                while autoCoinEnabled do
+                    task.wait(0.3) -- หน่วงเวลาสั้นๆ ป้องกันแบน/หลุด
+                    
+                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                        local hrp = LocalPlayer.Character.HumanoidRootPart
+                        
+                        -- ค้นหาเหรียญในแผนที่
+                        local coinContainer = Workspace:FindFirstChild("Normal") or Workspace:FindFirstChild("CoinContainer")
+                        if coinContainer then
+                            for _, item in pairs(coinContainer:GetDescendants()) do
+                                if not autoCoinEnabled then break end
+                                if item.Name == "Coin_Container" or item.Name == "Coin" then
+                                    if item:IsA("BasePart") then
+                                        -- วาร์ปไปที่ตำแหน่งเหรียญ
+                                        hrp.CFrame = item.CFrame
+                                        task.wait(0.2)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end,
+})
+
+-- ==========================================
+-- 3. ระบบล็อกเป้าปืน/ปาดมีด (Combat / Aim)
+-- ==========================================
+local CombatTab = Window:CreateTab("ต่อสู้ / ล็อกเป้า", 4483362458)
+local autoAimEnabled = false
+
+-- ฟังก์ชันหาเป้าหมาย
+local function getTarget()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    
+    local hasKnife = char:FindFirstChild("Knife")
+    local hasGun = char:FindFirstChild("Gun")
+    
+    local closestPlayer = nil
+    local shortestDistance = math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local targetChar = player.Character
+            local distance = (char.HumanoidRootPart.Position - targetChar.HumanoidRootPart.Position).Magnitude
+            
+            -- ถ้านายอำเภอถือปืน -> ล็อกเป้าหา "ฆาตกร"
+            if hasGun then
+                local backpack = player:FindFirstChild("Backpack")
+                if (backpack and backpack:FindFirstChild("Knife")) or targetChar:FindFirstChild("Knife") then
+                    return targetChar -- เจอมือสังหาร ล็อกเป้าทันที
+                end
+            -- ถ้าฆาตกรถือมีด -> ล็อกเป้าหา "คนที่ใกล้ที่สุด"
+            elseif hasKnife then
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    closestPlayer = targetChar
+                end
+            end
+        end
+    end
+    
+    return closestPlayer
+end
+
+CombatTab:CreateToggle({
+    Name = "เปิดระบบล็อกเป้าอัตโนมัติ (ปืน / มีด)",
+    CurrentValue = false,
+    Flag = "AutoAimToggle",
+    Callback = function(Value)
+        autoAimEnabled = Value
+        if autoAimEnabled then
+            task.spawn(function()
+                while autoAimEnabled do
+                    task.wait(0.1)
+                    local char = LocalPlayer.Character
+                    if char then
+                        local gun = char:FindFirstChild("Gun")
+                        local knife = char:FindFirstChild("Knife")
+                        local target = getTarget()
+                        
+                        if target and target:FindFirstChild("HumanoidRootPart") then
+                            -- ถ้าถือปืน (นายอำเภอ): หันหน้าและยิงไปหาฆาตกร
+                            if gun then
+                                Workspace.CurrentCamera.CFrame = CFrame.new(Workspace.CurrentCamera.CFrame.Position, target.HumanoidRootPart.Position)
+                                gun:Activate()
+                            -- ถ้าถือมีด (ฆาตกร): หันหน้าและพุ่งปาดมีดใส่เหยื่อ
+                            elseif knife then
+                                Workspace.CurrentCamera.CFrame = CFrame.new(Workspace.CurrentCamera.CFrame.Position, target.HumanoidRootPart.Position)
+                                knife:Activate()
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end,
+})
+
+Rayfield:Notify({
+    Title = "โหลดสคริปต์สำเร็จ!",
+    Content = "สคริปต์ MM2 ภาษาไทย พร้อมใช้งานแล้วเพื่อน",
+    Duration = 5,
+    Image = 4483362458,
+})
